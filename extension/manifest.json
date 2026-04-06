@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Dispatch Dashboard - Welltrax Bridge",
+  "version": "1.0.2",
+  "description": "Captures Welltrax dispatch board data and forwards it to the Dispatch Dashboard.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://welltrax-portal.wolfepakcloud.com/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://welltrax.wolfepakcloud.com/*"],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://welltrax.wolfepakcloud.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

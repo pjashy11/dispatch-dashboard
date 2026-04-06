@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 280px; padding: 12px; font-family: -apple-system, sans-serif; font-size: 13px; color: #e2e8f0; background: #1e293b; margin: 0; }
+    h3 { margin: 0 0 8px; font-size: 14px; color: #f1f5f9; }
+    .status { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot.ok { background: #10b981; }
+    .dot.off { background: #ef4444; }
+    .info { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+    .last { background: #0f172a; padding: 8px; border-radius: 6px; margin-top: 8px; font-size: 11px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h3>Welltrax Bridge</h3>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">Checking...</span>
+  </div>
+  <div class="info">
+    Use Welltrax normally. Dispatch board data is forwarded to the Dispatch Dashboard automatically.
+  </div>
+  <div class="last" id="lastForward" style="display:none"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
