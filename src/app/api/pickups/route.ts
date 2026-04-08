@@ -24,56 +24,6 @@ const pickupCache: Map<string, CachedAccount> = new Map();
 let cacheBuiltAt = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-// Resolve dropoff names to their account names via DROP_OFF setupinfo lookup.
-// The DROP_OFF target returns dropoffs nested under their accounts,
-// which DO have account names (unlike the default dropoff objects on pickups).
-async function resolveDropoffAccounts(
-  dropoffNames: string[]
-): Promise<Map<string, { accountName: string; accountId: number }[]>> {
-  const resultMap = new Map<string, { accountName: string; accountId: number }[]>();
-  if (dropoffNames.length === 0) return resultMap;
-
-  for (const dropName of dropoffNames) {
-    try {
-      const result = await fetchSetupInfo([
-        {
-          target: "DROP_OFF",
-          searchCriteria: {
-            dropOffName: dropName,
-            offset: "0",
-            limit: "20",
-            sortBy: "name",
-            sortOrder: "ASC",
-          },
-        },
-      ]);
-
-      if (result.ok) {
-        const retList = result.data?.result?.[0]?.retList ?? [];
-        const accounts: { accountName: string; accountId: number }[] = [];
-        // retList items are accounts, each with dropOffList
-        for (const acct of retList) {
-          const acctName = acct.contact?.fullName || acct.fullName || acct.name || "";
-          const acctId = acct.id;
-          for (const drop of acct.dropOffList || []) {
-            const dName = drop.contact?.fullName || drop.fullName || drop.name || "";
-            if (dName.toUpperCase() === dropName.toUpperCase() && acctName) {
-              accounts.push({ accountName: acctName, accountId: acctId });
-            }
-          }
-        }
-        if (accounts.length > 0) {
-          resultMap.set(dropName, accounts);
-        }
-      }
-    } catch (err) {
-      console.warn(`[Pickups] Failed to resolve dropoff "${dropName}":`, err);
-    }
-  }
-
-  return resultMap;
-}
-
 async function fetchPickupsForAccount(
   accountName: string
 ): Promise<CachedAccount> {
@@ -81,9 +31,6 @@ async function fetchPickupsForAccount(
   const allPickups: CachedPickup[] = [];
   let offset = 0;
   const pageSize = 500;
-
-  // Collect dropoff names that need account name resolution
-  const unresolvedDropoffNames = new Set<string>();
 
   while (true) {
     const result = await fetchSetupInfo([
@@ -105,9 +52,9 @@ async function fetchPickupsForAccount(
 
     for (const account of retList) {
       for (const pu of account.pickUpList || []) {
-        if (!pu.isActive) continue;
+        if (pu.isActive === false || pu.isActive === "false") continue;
         // Filter to CRUDE commodity only
-        if (pu.commodityId !== CRUDE_COMMODITY_ID) continue;
+        if (Number(pu.commodityId) !== CRUDE_COMMODITY_ID) continue;
         // Extract terminal names from terminalList
         const puTerminals: string[] = (pu.terminalList || [])
           .map((t: any) => t.contact?.fullName || t.name || "")
@@ -123,11 +70,6 @@ async function fetchPickupsForAccount(
             d.accountName ||
             "";
           const acctId = d.account?.id || d.accountId || null;
-
-          // Track dropoff names that need account resolution
-          if (!acctName && dropName) {
-            unresolvedDropoffNames.add(dropName);
-          }
 
           defaultDropoffs.push({
             id: d.id,
@@ -159,40 +101,6 @@ async function fetchPickupsForAccount(
 
     if (retList.length < pageSize) break;
     offset += pageSize;
-  }
-
-  // Resolve dropoff names to account names via DROP_OFF lookup
-  if (unresolvedDropoffNames.size > 0) {
-    console.log(
-      `[Pickups] Resolving ${unresolvedDropoffNames.size} dropoff account names for "${accountName}"...`
-    );
-    const dropoffAccountMap = await resolveDropoffAccounts(
-      Array.from(unresolvedDropoffNames)
-    );
-
-    // Patch resolved account names back into the pickups
-    // A dropoff can belong to multiple accounts — we need to expand:
-    // if a default dropoff "GENEVA" resolves to [SHELL, GULFMARK],
-    // we replace the single entry with one entry per account
-    for (const pickup of allPickups) {
-      const expanded: CachedPickup["defaultDropoffs"] = [];
-      for (const drop of pickup.defaultDropoffs) {
-        if (!drop.accountName && drop.name && dropoffAccountMap.has(drop.name)) {
-          // Replace with one entry per resolved account
-          for (const resolved of dropoffAccountMap.get(drop.name)!) {
-            expanded.push({
-              id: drop.id,
-              name: drop.name,
-              accountName: resolved.accountName,
-              accountId: resolved.accountId,
-            });
-          }
-        } else {
-          expanded.push(drop);
-        }
-      }
-      pickup.defaultDropoffs = expanded;
-    }
   }
 
   // Sort pickups A-Z by name

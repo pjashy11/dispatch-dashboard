@@ -25,7 +25,8 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
   const allAccounts: CachedDropoffAccount[] = [];
   let offset = 0;
-  const pageSize = 500;
+  const pageSize = 5000;
+  let totalRetListItems = 0;
 
   while (true) {
     const result = await fetchSetupInfo([
@@ -40,9 +41,13 @@ async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
       },
     ]);
 
-    if (!result.ok) break;
+    if (!result.ok) {
+      console.warn(`[Dropoffs] Fetch failed at offset ${offset}:`, result.status);
+      break;
+    }
     const retList = result.data?.result?.[0]?.retList ?? [];
     if (retList.length === 0) break;
+    totalRetListItems += retList.length;
 
     for (const account of retList) {
       const acctName = account.contact?.fullName || account.fullName || account.name || "";
@@ -51,9 +56,9 @@ async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
 
       const dropoffs: CachedDropoff[] = [];
       for (const d of account.dropOffList || []) {
-        if (!d.isActive) continue;
-        // Filter to CRUDE commodity only
-        if (d.commodityId !== CRUDE_COMMODITY_ID) continue;
+        // Use loose checks — API may return isActive/commodityId as different types
+        if (d.isActive === false || d.isActive === "false") continue;
+        if (Number(d.commodityId) !== CRUDE_COMMODITY_ID) continue;
 
         const terminals: string[] = (d.terminalList || [])
           .map((t: any) => t.contact?.fullName || t.name || "")
@@ -79,6 +84,7 @@ async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
   }
 
   allAccounts.sort((a, b) => a.name.localeCompare(b.name));
+  console.log(`[Dropoffs] Fetched ${allAccounts.length} accounts with active CRUDE dropoffs (${totalRetListItems} total retList items across pages)`);
 
   return allAccounts;
 }

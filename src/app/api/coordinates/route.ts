@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { fetchSetupInfo } from "@/lib/welltrax";
 
-// Server-side coordinate cache: name → { lat, lng } or null
-const pickupCoordCache = new Map<string, { lat: number; lng: number } | null>();
-const dropoffCoordCache = new Map<string, { lat: number; lng: number } | null>();
+// Server-side coordinate cache: name → { lat, lng, cachedAt } or null
+const COORD_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const pickupCoordCache = new Map<string, { lat: number; lng: number; cachedAt: number } | null>();
+const dropoffCoordCache = new Map<string, { lat: number; lng: number; cachedAt: number } | null>();
+
+function getCachedCoord(cache: Map<string, { lat: number; lng: number; cachedAt: number } | null>, key: string) {
+  const entry = cache.get(key);
+  if (entry === null) return null; // cached "not found"
+  if (entry && Date.now() - entry.cachedAt < COORD_CACHE_TTL) return entry;
+  if (entry) cache.delete(key); // expired
+  return undefined; // not cached
+}
 
 /** Extract coordinates from a pickup or dropoff entity. */
 function extractCoords(entity: any): { lat: number; lng: number } | null {
@@ -36,8 +45,9 @@ export async function GET(request: Request) {
     // Lookup pickup coordinates (cache first)
     if (pickupName) {
       const key = pickupName.toUpperCase();
-      if (pickupCoordCache.has(key)) {
-        result.pickup = pickupCoordCache.get(key) || undefined;
+      const cached = getCachedCoord(pickupCoordCache, key);
+      if (cached !== undefined) {
+        if (cached) result.pickup = { lat: cached.lat, lng: cached.lng };
       } else {
         const res = await fetchSetupInfo([
           {
@@ -66,7 +76,7 @@ export async function GET(request: Request) {
             if (found) break;
           }
         }
-        pickupCoordCache.set(key, found);
+        pickupCoordCache.set(key, found ? { ...found, cachedAt: Date.now() } : null);
         if (found) result.pickup = found;
       }
     }
@@ -74,8 +84,9 @@ export async function GET(request: Request) {
     // Lookup dropoff coordinates (cache first)
     if (dropoffName) {
       const key = dropoffName.toUpperCase();
-      if (dropoffCoordCache.has(key)) {
-        result.dropoff = dropoffCoordCache.get(key) || undefined;
+      const cached = getCachedCoord(dropoffCoordCache, key);
+      if (cached !== undefined) {
+        if (cached) result.dropoff = { lat: cached.lat, lng: cached.lng };
       } else {
         const res = await fetchSetupInfo([
           {
@@ -104,7 +115,7 @@ export async function GET(request: Request) {
             if (found) break;
           }
         }
-        dropoffCoordCache.set(key, found);
+        dropoffCoordCache.set(key, found ? { ...found, cachedAt: Date.now() } : null);
         if (found) result.dropoff = found;
       }
     }

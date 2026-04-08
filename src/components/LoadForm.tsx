@@ -45,13 +45,14 @@ function toApiDate(isoDate: string): string {
 }
 
 function getTodayStr() {
-  return new Date().toISOString().split("T")[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function getTomorrowStr() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
-  return d.toISOString().split("T")[0];
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // Client-side caches — persist across re-renders and form open/close
@@ -369,17 +370,22 @@ export default function LoadForm({
     return acct.dropoffs.map((d) => d.name).sort();
   }, [dropoffAccountName, allDropoffAccounts]);
 
+  // Build a lookup map for O(1) scenario matching (10k+ scenarios)
+  const scenarioMap = useMemo(() => {
+    const map = new Map<string, Scenario>();
+    for (const s of scenarios) {
+      if (s.pickUpName && s.dropOffName) {
+        map.set(`${s.pickUpName.toUpperCase()}||${s.dropOffName.toUpperCase()}`, s);
+      }
+    }
+    return map;
+  }, [scenarios]);
+
   // Find scenario for loaded miles
   const matchedScenario = useMemo(() => {
     if (!selectedPickupName || !dropoffName) return null;
-    return (
-      scenarios.find(
-        (s) =>
-          s.pickUpName?.toUpperCase() === selectedPickupName.toUpperCase() &&
-          s.dropOffName?.toUpperCase() === dropoffName.toUpperCase()
-      ) || null
-    );
-  }, [scenarios, selectedPickupName, dropoffName]);
+    return scenarioMap.get(`${selectedPickupName.toUpperCase()}||${dropoffName.toUpperCase()}`) || null;
+  }, [scenarioMap, selectedPickupName, dropoffName]);
 
   const scenarioLoadedMiles = matchedScenario?.loadedMiles ?? null;
   // Effective loaded miles: scenario value if exists, otherwise manual entry
@@ -442,6 +448,7 @@ export default function LoadForm({
   }, [terminalName]);
 
   // When pickup changes, set default dropoff from its defaultDropOffList
+  // Resolve account name client-side against active dropoff data
   const handlePickupChange = (pickupName: string) => {
     setSelectedPickupName(pickupName);
     setSelectedTankNumber("");
@@ -450,8 +457,21 @@ export default function LoadForm({
     const pickup = pickupOptions.find((p) => p.name === pickupName);
     if (pickup && pickup.defaultDropoffs.length > 0) {
       const defaultDrop = pickup.defaultDropoffs[0];
-      setDropoffAccountName(defaultDrop.accountName || "");
-      setDropoffName(defaultDrop.name || "");
+      let acctName = defaultDrop.accountName || "";
+      const dropName = defaultDrop.name || "";
+
+      // If no account name from API, resolve against active dropoff accounts
+      if (!acctName && dropName) {
+        for (const acct of allDropoffAccounts) {
+          if (acct.dropoffs.some((d) => d.name.toUpperCase() === dropName.toUpperCase())) {
+            acctName = acct.name;
+            break;
+          }
+        }
+      }
+
+      setDropoffAccountName(acctName);
+      setDropoffName(dropName);
     } else {
       setDropoffAccountName("");
       setDropoffName("");
@@ -545,7 +565,7 @@ export default function LoadForm({
   };
 
   const canSubmit =
-    pickupAccountName && selectedPickupName && requestedPickupDate && !submitting &&
+    pickupAccountName && selectedPickupName && selectedTankNumber && requestedPickupDate && !submitting &&
     (scenarioLoadedMiles != null || manualLoadedMiles !== "");
 
   const isViewing = existingLoad !== null;
