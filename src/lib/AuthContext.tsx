@@ -28,11 +28,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Fallback: if onAuthStateChanged doesn't fire within 8s (e.g. Firebase blocked),
+    // drop the spinner so the login screen can appear.
+    const timeout = setTimeout(() => setLoading(false), 8000);
+
     const unsubscribe = onAuthStateChanged(auth, (u) => {
+      clearTimeout(timeout);
       setUser(u);
       setLoading(false);
     });
-    return unsubscribe;
+
+    return () => {
+      clearTimeout(timeout);
+      unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {

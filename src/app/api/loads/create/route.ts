@@ -64,6 +64,14 @@ export async function POST(request: Request) {
       payload.confirmationNumber = confirmationNumber;
     }
 
+    // Split pickups (indices 2-6)
+    for (let idx = 2; idx <= 6; idx++) {
+      const name = body[`pickUpName${idx}`];
+      const tank = body[`pickUpTankNumber${idx}`];
+      if (name) payload[`pickUpName${idx}`] = name;
+      if (tank) payload[`pickUpTankNumber${idx}`] = tank;
+    }
+
     // Handle dropoff
     if (useDefaultDropoff || !dropOffName) {
       payload.createLoadWithFirstDefaultDropOff = "true";

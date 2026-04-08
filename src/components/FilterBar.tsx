@@ -280,7 +280,7 @@ export default function FilterBar({
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-[220px]">
             <div className="text-lg font-semibold" style={{ color: "var(--color-text-primary)" }}>
-              Dispatch Dashboard
+              Load Dashboard
             </div>
             <div className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
               {loadCount} total loads

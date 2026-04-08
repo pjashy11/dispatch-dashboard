@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Dispatch Dashboard - Welltrax Bridge",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Captures Welltrax dispatch board data and forwards it to the Dispatch Dashboard.",
   "permissions": [
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "https://welltrax-portal.wolfepakcloud.com/*",
-    "http://localhost:3000/*"
+    "http://localhost:3002/*"
   ],
   "background": {
     "service_worker": "background.js"

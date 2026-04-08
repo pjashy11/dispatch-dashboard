@@ -65,6 +65,13 @@ interface OpenPointerDrag {
   y: number;
 }
 
+interface CardPointerDrag {
+  loadId: number;
+  fromDriver: string;
+  x: number;
+  y: number;
+}
+
 type SortDir = "asc" | "desc";
 
 /* ── Open loads table columns ──────────────────────────── */
@@ -111,6 +118,8 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
   const [armedDragLoadId, setArmedDragLoadId] = useState<number | null>(null);
   const [pressingLoadId, setPressingLoadId] = useState<number | null>(null);
   const [openPointerDrag, setOpenPointerDrag] = useState<OpenPointerDrag | null>(null);
+  const [cardPointerDrag, setCardPointerDrag] = useState<CardPointerDrag | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{ message: string; onConfirm: () => void; onCancel: () => void } | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerStartRef = useRef<{ x: number; y: number; loadId: number } | null>(null);
@@ -406,6 +415,16 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     return !!load && load.status.toUpperCase() === "ASSIGNED";
   }, []);
 
+  const askConfirm = useCallback((message: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setPendingConfirm({
+        message,
+        onConfirm: () => { setPendingConfirm(null); resolve(true); },
+        onCancel: () => { setPendingConfirm(null); resolve(false); },
+      });
+    });
+  }, []);
+
   const clearOpenPointerDrag = useCallback(() => {
     didDrag.current = false;
     setOpenPointerDrag(null);
@@ -463,6 +482,16 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     const targetRow = driverRows.find((r) => r.driver.driverName === driverName);
     if (!targetRow) return;
 
+    if (data.fromDriver === null) {
+      const confirmed = await askConfirm(`Assign load ${load.confirmationNo || load.bolNumber} to ${driverName}?`);
+      if (!confirmed) return;
+    } else if (data.fromDriver === driverName) {
+      return;
+    } else {
+      const confirmed = await askConfirm(`Reassign load ${load.confirmationNo || load.bolNumber} from ${data.fromDriver} to ${driverName}?`);
+      if (!confirmed) return;
+    }
+
     try {
       setActionLoading(true);
       setError("");
@@ -479,11 +508,6 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
           terminalName: targetRow.driver.terminal || load.terminal,
           sequenceNumber: targetRow.loads.length + 1,
         });
-      } else if (data.fromDriver === driverName) {
-        // Same driver — only rearrange if the position actually changed
-        // (dropping back on the same driver row without a specific insert index is a no-op)
-        setActionLoading(false);
-        return;
       } else {
         // Different driver → REASSIGN
         await callAssignment({
@@ -522,6 +546,11 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     const load = findLoadById(data.loadId);
     if (!load || !canDropLoad(load as DispatchLoad)) return;
 
+    const confirmed = await askConfirm(`Unassign load ${load.confirmationNo || load.bolNumber} from ${data.fromDriver}?`);
+    if (!confirmed) return;
+
+    const driverRow = driverRows.find((r) => r.driver.driverName === data.fromDriver);
+
     try {
       setActionLoading(true);
       setError("");
@@ -529,6 +558,9 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         action: "drop",
         loadId: load.id,
         billOfLadingNumber: load.bolNumber,
+        driverId: driverRow?.driver.driverId ?? (load as DispatchLoad).driverId,
+        driverHostId: driverRow?.driver.driverHostId ?? (load as DispatchLoad).driverHostId,
+        shiftDate: driverRow?.driver.shiftDate || todayMMDDYYYY(),
       });
       await fetchLoads();
     } catch (err: any) {
@@ -600,6 +632,9 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
       const targetRow = driverRows.find((row) => row.driver.driverName === targetDriver);
       if (!load || !targetRow) return;
 
+      const confirmed = await askConfirm(`Assign load ${load.confirmationNo || load.bolNumber} to ${targetDriver}?`);
+      if (!confirmed) return;
+
       try {
         setActionLoading(true);
         setError("");
@@ -628,7 +663,107 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [callAssignment, clearOpenPointerDrag, dragOverDriver, driverRows, fetchLoads, findLoadById, openPointerDrag]);
+  }, [askConfirm, callAssignment, clearOpenPointerDrag, dragOverDriver, driverRows, fetchLoads, findLoadById, openPointerDrag]);
+
+  /* ── Card pointer drag (touch/mobile for driver tiles) ── */
+  const clearCardPointerDrag = useCallback(() => {
+    setCardPointerDrag(null);
+    setDragData(null);
+    setDragOverDriver(null);
+    setDragOverOpen(false);
+    setArmedDragLoadId(null);
+    setPressingLoadId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!cardPointerDrag) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      e.preventDefault();
+      setCardPointerDrag((curr) => curr ? { ...curr, x: e.clientX, y: e.clientY } : curr);
+      const target = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const driverRow = target?.closest("[data-driver-row]") as HTMLElement | null;
+      const openPane = openPaneRef.current;
+      if (driverRow) {
+        setDragOverDriver(driverRow.dataset.driverRow || null);
+        setDragOverOpen(false);
+      } else if (openPane && (openPane === target || openPane.contains(target))) {
+        setDragOverDriver(null);
+        setDragOverOpen(true);
+      } else {
+        setDragOverDriver(null);
+        setDragOverOpen(false);
+      }
+    };
+
+    const handlePointerUp = async () => {
+      const activeDrag = cardPointerDrag;
+      const targetDriver = dragOverDriver;
+      const isOverOpen = dragOverOpen;
+      clearCardPointerDrag();
+
+      const load = findLoadById(activeDrag.loadId);
+      if (!load) return;
+
+      if (isOverOpen && activeDrag.fromDriver) {
+        const confirmed = await askConfirm(`Unassign load ${load.confirmationNo || load.bolNumber} from ${activeDrag.fromDriver}?`);
+        if (!confirmed) return;
+        const driverRow = driverRows.find((r) => r.driver.driverName === activeDrag.fromDriver);
+        try {
+          setActionLoading(true);
+          setError("");
+          await callAssignment({
+            action: "drop",
+            loadId: load.id,
+            billOfLadingNumber: load.bolNumber,
+            driverId: driverRow?.driver.driverId ?? (load as DispatchLoad).driverId,
+            driverHostId: driverRow?.driver.driverHostId ?? (load as DispatchLoad).driverHostId,
+            shiftDate: driverRow?.driver.shiftDate || todayMMDDYYYY(),
+          });
+          await fetchLoads();
+        } catch (err: any) {
+          setError(err.message || "Drop failed");
+        } finally {
+          setActionLoading(false);
+        }
+      } else if (targetDriver && targetDriver !== activeDrag.fromDriver) {
+        const targetRow = driverRows.find((r) => r.driver.driverName === targetDriver);
+        if (!targetRow) return;
+        const action = activeDrag.fromDriver ? "reassign" : "add";
+        const confirmMsg = action === "reassign"
+          ? `Reassign load ${load.confirmationNo || load.bolNumber} from ${activeDrag.fromDriver} to ${targetDriver}?`
+          : `Assign load ${load.confirmationNo || load.bolNumber} to ${targetDriver}?`;
+        const confirmed = await askConfirm(confirmMsg);
+        if (!confirmed) return;
+        try {
+          setActionLoading(true);
+          setError("");
+          await callAssignment({
+            action,
+            loadId: load.id,
+            billOfLadingNumber: load.bolNumber,
+            driverId: targetRow.driver.driverId,
+            driverHostId: targetRow.driver.driverHostId,
+            shiftDate: targetRow.driver.shiftDate || todayMMDDYYYY(),
+            terminalName: targetRow.driver.terminal || load.terminal,
+            sequenceNumber: targetRow.loads.length + 1,
+          });
+          await fetchLoads();
+        } catch (err: any) {
+          setError(err.message || "Assignment failed");
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [askConfirm, callAssignment, cardPointerDrag, clearCardPointerDrag, dragOverDriver, dragOverOpen, driverRows, fetchLoads, findLoadById]);
 
   /* ── Load Card (driver tiles) ────────────────────────── */
   const renderLoadCard = (load: DispatchLoad, driverName: string) => {
@@ -655,7 +790,15 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         }}
         onPointerMove={(e) => {
           const start = pointerStartRef.current;
-          if (!start || start.loadId !== load.id || isArmed) return;
+          if (!start || start.loadId !== load.id) return;
+          if (isArmed) {
+            // Start pointer-based drag for mobile (HTML5 DnD doesn't fire on touch)
+            if (!cardPointerDrag && !didDrag.current) {
+              setCardPointerDrag({ loadId: load.id, fromDriver: driverName, x: e.clientX, y: e.clientY });
+              setDragData({ loadId: load.id, fromDriver: driverName });
+            }
+            return;
+          }
           const dx = Math.abs(e.clientX - start.x);
           const dy = Math.abs(e.clientY - start.y);
           if (dx > 6 || dy > 6) {
@@ -697,6 +840,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
           border: `1px solid ${isArmed ? "#60a5fa" : border}`,
           opacity: isDragging ? 0.5 : 1,
           boxShadow: isArmed ? "0 0 0 1px rgba(96,165,250,0.45)" : isPressing ? "0 0 0 1px rgba(148,163,184,0.25)" : undefined,
+          touchAction: isArmed ? "none" : "auto",
         }}
       >
         {/* Progress bar — top edge only */}
@@ -1456,6 +1600,29 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation dialog */}
+      {pendingConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60">
+          <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-6 mx-4 max-w-sm w-full">
+            <p className="text-sm text-slate-200 mb-5">{pendingConfirm.message}</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={pendingConfirm.onCancel}
+                className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={pendingConfirm.onConfirm}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
+              >
+                Confirm
+              </button>
             </div>
           </div>
         </div>

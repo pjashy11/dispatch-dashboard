@@ -38,6 +38,11 @@ interface LoadEntry {
   confirmationNo: string;
 }
 
+interface SplitPickup {
+  pickupName: string;
+  tankNumber: string;
+}
+
 function toApiDate(isoDate: string): string {
   if (!isoDate) return "";
   const [y, m, d] = isoDate.split("-");
@@ -478,6 +483,29 @@ export default function LoadForm({
     }
   };
 
+  // Split pickups (indices 2-6, same account as primary)
+  const [splitPickups, setSplitPickups] = useState<SplitPickup[]>([]);
+
+  const addSplitPickup = () => {
+    if (splitPickups.length >= 5) return;
+    setSplitPickups((prev) => [...prev, { pickupName: "", tankNumber: "" }]);
+  };
+
+  const removeSplitPickup = (idx: number) => {
+    setSplitPickups((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateSplitPickup = (idx: number, field: keyof SplitPickup, value: string) => {
+    setSplitPickups((prev) =>
+      prev.map((sp, i) => {
+        if (i !== idx) return sp;
+        const updated = { ...sp, [field]: value };
+        if (field === "pickupName") updated.tankNumber = "";
+        return updated;
+      })
+    );
+  };
+
   // Multi-load entries
   const addEntry = () => setEntries((prev) => [...prev, { confirmationNo: "" }]);
   const removeEntry = (idx: number) => {
@@ -520,6 +548,13 @@ export default function LoadForm({
         if (entry.confirmationNo) {
           payload.confirmationNumber = entry.confirmationNo;
         }
+
+        // Split pickups (indices 2-6)
+        splitPickups.forEach((sp, i) => {
+          const idx = i + 2;
+          if (sp.pickupName) payload[`pickUpName${idx}`] = sp.pickupName;
+          if (sp.tankNumber) payload[`pickUpTankNumber${idx}`] = sp.tankNumber;
+        });
 
         const res = await fetch("/api/loads/create", {
           method: "POST",
@@ -1020,6 +1055,80 @@ export default function LoadForm({
                     style={inputStyle}
                   />
                 </div>
+
+                {/* Split Pickups */}
+                {selectedPickupName && (
+                  <div
+                    className="space-y-2 rounded-lg p-3"
+                    style={{
+                      background: "var(--color-bg-tertiary)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>
+                        Split Pickups {splitPickups.length > 0 ? `(${splitPickups.length})` : ""}
+                      </span>
+                      {splitPickups.length < 5 && (
+                        <button
+                          onClick={addSplitPickup}
+                          className="text-xs px-2 py-0.5 rounded transition-colors"
+                          style={{
+                            background: "var(--color-input-bg)",
+                            border: "1px solid var(--color-input-border)",
+                            color: "var(--color-text-primary)",
+                          }}
+                        >
+                          + Add Split
+                        </button>
+                      )}
+                    </div>
+
+                    {splitPickups.length === 0 && (
+                      <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                        Add up to 5 additional pickup locations on the same load.
+                      </p>
+                    )}
+
+                    {splitPickups.map((sp, i) => {
+                      const splitPickupData = pickupOptions.find((p) => p.name === sp.pickupName);
+                      const splitTankOptions = splitPickupData?.tanks || [];
+                      return (
+                        <div key={i} className="space-y-1.5 pt-2" style={{ borderTop: "1px solid var(--color-border)" }}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium" style={{ color: "var(--color-accent)" }}>
+                              Split #{i + 2}
+                            </span>
+                            <button
+                              onClick={() => removeSplitPickup(i)}
+                              className="text-xs hover:opacity-80"
+                              style={{ color: "var(--color-text-muted)" }}
+                            >
+                              &times; Remove
+                            </button>
+                          </div>
+                          <SearchableSelect
+                            value={sp.pickupName}
+                            onChange={(v) => updateSplitPickup(i, "pickupName", v)}
+                            options={pickupOptions.map((p) => ({ value: p.name, label: p.name }))}
+                            placeholder="Select Pickup"
+                            className={inputClass}
+                            style={inputStyle}
+                          />
+                          <SearchableSelect
+                            value={sp.tankNumber}
+                            onChange={(v) => updateSplitPickup(i, "tankNumber", v)}
+                            disabled={!sp.pickupName || splitTankOptions.length === 0}
+                            options={splitTankOptions.map((t) => ({ value: t.tankNumber, label: t.tankNumber }))}
+                            placeholder={splitTankOptions.length === 0 ? "No tanks" : "Select Tank"}
+                            className={`${inputClass} disabled:opacity-50`}
+                            style={inputStyle}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Urgent under pickup */}
                 <div>
