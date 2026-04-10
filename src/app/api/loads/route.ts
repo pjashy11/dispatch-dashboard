@@ -69,7 +69,7 @@ interface LoadCacheEntry {
   refreshing: boolean;
 }
 
-const loadCache = new Map<string, LoadCacheEntry>();
+export const loadCache = new Map<string, LoadCacheEntry>();
 const CACHE_FRESH_MS = 60 * 1000;
 const CACHE_STALE_MS = 5 * 60 * 1000;
 

@@ -415,6 +415,17 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     return !!load && load.status.toUpperCase() === "ASSIGNED";
   }, []);
 
+  /** Compute a 1-based insert index from pointer position within a driver row. */
+  const getInsertIndex = useCallback((x: number, driverName: string, totalLoads: number): number => {
+    const cards = document.querySelectorAll(`[data-driver-row="${driverName}"] [data-load-card]`);
+    for (let i = 0; i < cards.length; i++) {
+      const rect = cards[i].getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      if (x < midX) return i + 1; // 1-based
+    }
+    return totalLoads; // drop at end
+  }, []);
+
   const askConfirm = useCallback((message: string): Promise<boolean> => {
     return new Promise((resolve) => {
       setPendingConfirm({
@@ -486,6 +497,31 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
       const confirmed = await askConfirm(`Assign load ${load.confirmationNo || load.bolNumber} to ${driverName}?`);
       if (!confirmed) return;
     } else if (data.fromDriver === driverName) {
+      const newSeq = getInsertIndex(e.clientX, driverName, targetRow.loads.length);
+      const currentIdx = targetRow.loads.findIndex((l) => l.id === data.loadId);
+      const currentSeq = currentIdx + 1;
+      if (newSeq === currentSeq || newSeq === currentSeq + 1) return; // same position, no-op
+
+      const confirmed = await askConfirm(`Move load ${load.confirmationNo || load.bolNumber} to position ${newSeq} on ${driverName}?`);
+      if (!confirmed) return;
+      try {
+        setActionLoading(true);
+        setError("");
+        await callAssignment({
+          action: "rearrange",
+          loadId: load.id,
+          billOfLadingNumber: load.bolNumber,
+          driverId: targetRow.driver.driverId,
+          driverHostId: targetRow.driver.driverHostId,
+          shiftDate: targetRow.driver.shiftDate || todayMMDDYYYY(),
+          sequenceNumber: newSeq,
+        });
+        await fetchLoads();
+      } catch (err: any) {
+        setError(err.message || "Rearrange failed");
+      } finally {
+        setActionLoading(false);
+      }
       return;
     } else {
       const confirmed = await askConfirm(`Reassign load ${load.confirmationNo || load.bolNumber} from ${data.fromDriver} to ${driverName}?`);
@@ -726,6 +762,35 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         } finally {
           setActionLoading(false);
         }
+      } else if (targetDriver && targetDriver === activeDrag.fromDriver) {
+        // Same driver — rearrange
+        const targetRow = driverRows.find((r) => r.driver.driverName === targetDriver);
+        if (!targetRow) return;
+        const newSeq = getInsertIndex(activeDrag.x, targetDriver, targetRow.loads.length);
+        const currentIdx = targetRow.loads.findIndex((l) => l.id === activeDrag.loadId);
+        const currentSeq = currentIdx + 1;
+        if (newSeq === currentSeq || newSeq === currentSeq + 1) return; // same position, no-op
+
+        const confirmed = await askConfirm(`Move load ${load.confirmationNo || load.bolNumber} to position ${newSeq} on ${targetDriver}?`);
+        if (!confirmed) return;
+        try {
+          setActionLoading(true);
+          setError("");
+          await callAssignment({
+            action: "rearrange",
+            loadId: load.id,
+            billOfLadingNumber: load.bolNumber,
+            driverId: targetRow.driver.driverId,
+            driverHostId: targetRow.driver.driverHostId,
+            shiftDate: targetRow.driver.shiftDate || todayMMDDYYYY(),
+            sequenceNumber: newSeq,
+          });
+          await fetchLoads();
+        } catch (err: any) {
+          setError(err.message || "Rearrange failed");
+        } finally {
+          setActionLoading(false);
+        }
       } else if (targetDriver && targetDriver !== activeDrag.fromDriver) {
         const targetRow = driverRows.find((r) => r.driver.driverName === targetDriver);
         if (!targetRow) return;
@@ -763,7 +828,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [askConfirm, callAssignment, cardPointerDrag, clearCardPointerDrag, dragOverDriver, dragOverOpen, driverRows, fetchLoads, findLoadById]);
+  }, [askConfirm, callAssignment, cardPointerDrag, clearCardPointerDrag, dragOverDriver, dragOverOpen, driverRows, fetchLoads, findLoadById, getInsertIndex]);
 
   /* ── Load Card (driver tiles) ────────────────────────── */
   const renderLoadCard = (load: DispatchLoad, driverName: string) => {
@@ -832,6 +897,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         onClick={() => {
           if (!didDrag.current) setEditLoad(load);
         }}
+        data-load-card={load.id}
         className="relative flex-shrink-0 rounded transition-all select-none overflow-hidden cursor-pointer"
         style={{
           width: 200,
@@ -1227,10 +1293,13 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         </div>
       )}
 
-      {/* Action loading */}
+      {/* Action loading overlay — blocks all interaction */}
       {actionLoading && (
-        <div className="px-4 py-1 text-xs text-blue-300 bg-blue-900/30">
-          Processing...
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="flex items-center gap-3 px-6 py-4 rounded-xl bg-slate-800 border border-slate-600 shadow-2xl">
+            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-medium text-slate-200">Processing...</span>
+          </div>
         </div>
       )}
 

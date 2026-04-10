@@ -135,7 +135,7 @@ interface LoadCache {
   refreshing: boolean;
 }
 
-const loadCacheByTerminal = new Map<string, LoadCache>();
+export const loadCacheByTerminal = new Map<string, LoadCache>();
 const CACHE_FRESH = 2 * 60 * 1000;   // 2 min — serve instantly, no refresh
 const CACHE_STALE = 10 * 60 * 1000;  // 10 min — serve instantly, refresh in background
 // Beyond 10 min — wait for fresh data

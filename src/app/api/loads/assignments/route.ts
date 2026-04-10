@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadAssignments } from "@/lib/welltrax";
+import { loadCacheByTerminal as dispatchCache } from "@/app/api/dispatch/route";
+import { loadCache as openLoadsCache } from "@/app/api/loads/route";
 
 const VALID_ACTIONS = ["add", "drop", "reassign", "rearrange", "cancel"];
 
@@ -66,6 +68,10 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    // Invalidate server-side caches so the next fetch gets fresh data
+    dispatchCache.clear();
+    openLoadsCache.clear();
 
     return NextResponse.json({ success: true, data: responseData });
   } catch (error: any) {
