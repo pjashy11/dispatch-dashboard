@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchSetupInfo } from "@/lib/welltrax";
 
-const CRUDE_COMMODITY_ID = 1;
 
 interface CachedPickup {
   id: number;
@@ -38,6 +37,8 @@ async function fetchPickupsForAccount(
         target: "PICK_UP",
         searchCriteria: {
           accountName,
+          isActive: "true",
+          commodityName: "CRUDE",
           offset: String(offset),
           limit: String(pageSize),
           sortBy: "name",
@@ -52,9 +53,6 @@ async function fetchPickupsForAccount(
 
     for (const account of retList) {
       for (const pu of account.pickUpList || []) {
-        if (pu.isActive === false || pu.isActive === "false") continue;
-        // Filter to CRUDE commodity only
-        if (Number(pu.commodityId) !== CRUDE_COMMODITY_ID) continue;
         // Extract terminal names from terminalList
         const puTerminals: string[] = (pu.terminalList || [])
           .map((t: any) => t.contact?.fullName || t.name || "")
@@ -106,8 +104,9 @@ async function fetchPickupsForAccount(
   // Sort pickups A-Z by name
   allPickups.sort((a, b) => a.name.localeCompare(b.name));
 
+  const terminalSet = new Set(allPickups.flatMap((p) => p.terminals));
   console.log(
-    `[Pickups] Fetched ${allPickups.length} active pickups for "${accountName}"`
+    `[Pickups] Fetched ${allPickups.length} active pickups for "${accountName}" | terminals: ${[...terminalSet].join(", ")}`
   );
 
   return { name: accountName, pickups: allPickups };
@@ -140,14 +139,16 @@ export async function GET(request: Request) {
       cached = false;
     }
 
-    // Filter by terminal if provided
+    // Filter by terminal if provided (case-insensitive partial match)
     if (terminalFilter) {
+      const tf = terminalFilter.toLowerCase();
       const filtered = {
         ...account,
         pickups: account.pickups.filter(
-          (p) => p.terminals.length === 0 || p.terminals.includes(terminalFilter)
+          (p) => p.terminals.length === 0 || p.terminals.some((t) => t.toLowerCase().includes(tf) || tf.includes(t.toLowerCase()))
         ),
       };
+      console.log(`[Pickups] Terminal filter "${terminalFilter}": ${account.pickups.length} → ${filtered.pickups.length} pickups`);
       return NextResponse.json({ account: filtered, cached });
     }
 

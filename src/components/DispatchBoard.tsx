@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import type { DispatchLoad, Load } from "@/lib/types";
+import type { DispatchLoad, Load, Scenario } from "@/lib/types";
 import DispatchLoadEditModal from "./DispatchLoadEditModal";
 import { useDispatchBridge } from "@/lib/useDispatchBridge";
 
@@ -20,6 +20,7 @@ interface DispatchBoardProps {
   onSignOut: () => void;
   theme: "dark" | "light";
   onThemeToggle: () => void;
+  scenarios?: Scenario[];
 }
 
 /* ── date helpers ──────────────────────────────────────── */
@@ -100,7 +101,7 @@ const DISPATCH_WORKSPACE_KEY = "dispatch-board-workspace";
 const DEFAULT_OPEN_COLUMN_ORDER = OPEN_COLS.map((column) => column.key) as OpenColumnKey[];
 const OPEN_COLS_MAP = new Map(OPEN_COLS.map((column) => [column.key, column]));
 
-export default function DispatchBoard({ onModuleChange, userName, onSignOut, theme, onThemeToggle }: DispatchBoardProps) {
+export default function DispatchBoard({ onModuleChange, userName, onSignOut, theme, onThemeToggle, scenarios = [] }: DispatchBoardProps) {
   const [allLoads, setAllLoads] = useState<DispatchLoad[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedTerminal, setSelectedTerminal] = useState(TERMINALS[0]);
@@ -115,6 +116,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
   const [editLoad, setEditLoad] = useState<DispatchLoad | null>(null);
   const [dragOverDriver, setDragOverDriver] = useState<string | null>(null);
   const [dragOverOpen, setDragOverOpen] = useState(false);
+  const [dragInsertIndex, setDragInsertIndex] = useState<number | null>(null);
   const [armedDragLoadId, setArmedDragLoadId] = useState<number | null>(null);
   const [pressingLoadId, setPressingLoadId] = useState<number | null>(null);
   const [openPointerDrag, setOpenPointerDrag] = useState<OpenPointerDrag | null>(null);
@@ -258,16 +260,25 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     if (selectedTerminal) fetchLoads();
   }, [fetchLoads, selectedTerminal]);
 
-  /* ── today filter (dispatch loads — assigned/ongoing/complete only) ── */
+  /* ── today filter (dispatch loads — only today's shift) ── */
   const filteredLoads = useMemo(() => {
-    const today = todayMMDDYYYY();
+    const todayStr = todayMMDDYYYY();
+    const todayNum = dateToNum(todayStr);
 
     return allLoads.filter((l) => {
       const s = l.status.toUpperCase();
-      if (s === "ASSIGNED" || s === "ONGOING") return true;
+      // ONGOING loads always show — they're actively in progress
+      if (s === "ONGOING") return true;
+      // Use shiftDate (the driver's shift the load was dispatched for) as the
+      // primary filter — this matches how Welltrax groups loads by day.
+      // Fall back to assignedPickupDate if shiftDate isn't available.
+      const dateStr = l.shiftDate || l.assignedPickupDate;
+      const num = dateToNum(dateStr);
+      if (s === "ASSIGNED") {
+        return num > 0 && num <= todayNum;
+      }
       if (s === "COMPLETE") {
-        const loadDate = l.pickupArrivalDate || l.assignedPickupDate;
-        return loadDate === today;
+        return dateStr === todayStr;
       }
       return false;
     });
@@ -468,6 +479,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     setDragData(null);
     setDragOverDriver(null);
     setDragOverOpen(false);
+    setDragInsertIndex(null);
     setArmedDragLoadId(null);
     setPressingLoadId(null);
   };
@@ -516,7 +528,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
           shiftDate: targetRow.driver.shiftDate || todayMMDDYYYY(),
           sequenceNumber: newSeq,
         });
-        await fetchLoads();
+        fetchLoads();
       } catch (err: any) {
         setError(err.message || "Rearrange failed");
       } finally {
@@ -557,7 +569,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         });
       }
 
-      await fetchLoads();
+      fetchLoads();
     } catch (err: any) {
       setError(err.message || "Assignment failed");
     } finally {
@@ -598,7 +610,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
         driverHostId: driverRow?.driver.driverHostId ?? (load as DispatchLoad).driverHostId,
         shiftDate: driverRow?.driver.shiftDate || todayMMDDYYYY(),
       });
-      await fetchLoads();
+      fetchLoads();
     } catch (err: any) {
       setError(err.message || "Drop failed");
     } finally {
@@ -636,7 +648,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || "Edit failed");
-    await fetchLoads();
+    fetchLoads();
   };
 
   /* ── card height constant ────────────────────────────── */
@@ -684,7 +696,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
           terminalName: targetRow.driver.terminal || load.terminal,
           sequenceNumber: targetRow.loads.length + 1,
         });
-        await fetchLoads();
+        fetchLoads();
       } catch (err: any) {
         setError(err.message || "Assignment failed");
       } finally {
@@ -707,6 +719,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
     setDragData(null);
     setDragOverDriver(null);
     setDragOverOpen(false);
+    setDragInsertIndex(null);
     setArmedDragLoadId(null);
     setPressingLoadId(null);
   }, []);
@@ -721,14 +734,22 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
       const driverRow = target?.closest("[data-driver-row]") as HTMLElement | null;
       const openPane = openPaneRef.current;
       if (driverRow) {
-        setDragOverDriver(driverRow.dataset.driverRow || null);
+        const driverName = driverRow.dataset.driverRow || null;
+        setDragOverDriver(driverName);
         setDragOverOpen(false);
+        // Compute insert index for visual indicator
+        if (driverName) {
+          const row = driverRows.find((r) => r.driver.driverName === driverName);
+          setDragInsertIndex(row ? getInsertIndex(e.clientX, driverName, row.loads.length) : null);
+        }
       } else if (openPane && (openPane === target || openPane.contains(target))) {
         setDragOverDriver(null);
         setDragOverOpen(true);
+        setDragInsertIndex(null);
       } else {
         setDragOverDriver(null);
         setDragOverOpen(false);
+        setDragInsertIndex(null);
       }
     };
 
@@ -756,7 +777,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
             driverHostId: driverRow?.driver.driverHostId ?? (load as DispatchLoad).driverHostId,
             shiftDate: driverRow?.driver.shiftDate || todayMMDDYYYY(),
           });
-          await fetchLoads();
+          fetchLoads();
         } catch (err: any) {
           setError(err.message || "Drop failed");
         } finally {
@@ -785,7 +806,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
             shiftDate: targetRow.driver.shiftDate || todayMMDDYYYY(),
             sequenceNumber: newSeq,
           });
-          await fetchLoads();
+          fetchLoads();
         } catch (err: any) {
           setError(err.message || "Rearrange failed");
         } finally {
@@ -813,7 +834,7 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
             terminalName: targetRow.driver.terminal || load.terminal,
             sequenceNumber: targetRow.loads.length + 1,
           });
-          await fetchLoads();
+          fetchLoads();
         } catch (err: any) {
           setError(err.message || "Assignment failed");
         } finally {
@@ -891,14 +912,17 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
             return;
           }
           didDrag.current = true;
+          // HTML5 drag is taking over — clear pointer-based drag so the ghost
+          // doesn't stay stuck (pointerup won't fire once HTML5 drag is active)
+          setCardPointerDrag(null);
           onDragStart(e, load.id, driverName);
         }}
         onDragEnd={onDragEnd}
         onClick={() => {
-          if (!didDrag.current) setEditLoad(load);
+          if (!didDrag.current && load.status.toUpperCase() !== "COMPLETE") setEditLoad(load);
         }}
         data-load-card={load.id}
-        className="relative flex-shrink-0 rounded transition-all select-none overflow-hidden cursor-pointer"
+        className={`relative flex-shrink-0 rounded transition-all select-none overflow-hidden ${load.status.toUpperCase() === "COMPLETE" ? "cursor-default" : "cursor-pointer"}`}
         style={{
           width: 200,
           height: CARD_H,
@@ -1510,8 +1534,9 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
                   onDragOver={(e) => {
                     handleDragOver(e);
                     setDragOverDriver(d.driverName);
+                    setDragInsertIndex(getInsertIndex(e.clientX, d.driverName, loads.length));
                   }}
-                  onDragLeave={() => setDragOverDriver(null)}
+                  onDragLeave={() => { setDragOverDriver(null); setDragInsertIndex(null); }}
                   onDrop={(e) => onDropOnDriver(e, d.driverName)}
                 >
                   {/* Driver info tile */}
@@ -1592,8 +1617,47 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
           load={editLoad}
           onClose={() => setEditLoad(null)}
           onSave={handleEditSave}
+          scenarios={scenarios}
         />
       )}
+
+      {cardPointerDrag && (() => {
+        const load = findLoadById(cardPointerDrag.loadId) as DispatchLoad | undefined;
+        if (!load) return null;
+        const bg = tileBg(load);
+        const border = tileBorder(load);
+
+        return (
+          <div
+            className="fixed z-50 pointer-events-none rounded overflow-hidden"
+            style={{
+              left: cardPointerDrag.x - 100,
+              top: cardPointerDrag.y - 34,
+              width: 200,
+              height: CARD_H,
+              background: bg,
+              border: `1px solid ${border}`,
+              opacity: 0.85,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            }}
+          >
+            <div className="absolute top-0 left-0 right-0" style={{ height: 3, background: "rgba(0,0,0,0.3)" }}>
+              <div style={{ width: `${load.progress}%`, height: "100%", background: load.status === "COMPLETE" ? "#22c55e" : "#ca8a04" }} />
+            </div>
+            <div className="px-2 flex flex-col justify-center" style={{ height: CARD_H, paddingTop: 7, paddingBottom: 5 }}>
+              <div className="text-[11px] font-semibold truncate text-slate-100">
+                {load.pickupName || load.confirmationNo}
+              </div>
+              <div className="text-[10px] truncate text-slate-400">
+                {load.dropoffName}
+              </div>
+              <div className="text-[10px] truncate text-slate-500">
+                {load.confirmationNo}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {openPointerDrag && (() => {
         const load = findLoadById(openPointerDrag.loadId);
@@ -1614,6 +1678,41 @@ export default function DispatchBoard({ onModuleChange, userName, onSignOut, the
               Drop on a driver to assign
             </div>
           </div>
+        );
+      })()}
+
+      {/* Drag insert indicator (absolute overlay — doesn't shift card layout) */}
+      {dragOverDriver && dragInsertIndex !== null && (() => {
+        const row = driverRows.find((r) => r.driver.driverName === dragOverDriver);
+        if (!row) return null;
+        const cards = document.querySelectorAll(`[data-driver-row="${dragOverDriver}"] [data-load-card]`);
+        if (cards.length === 0) return null;
+
+        let left: number;
+        let top: number;
+        let height: number;
+
+        if (dragInsertIndex <= cards.length) {
+          // Place indicator to the left of the card at this index (1-based → 0-based)
+          const card = cards[dragInsertIndex - 1];
+          const rect = card.getBoundingClientRect();
+          left = rect.left - 3;
+          top = rect.top;
+          height = rect.height;
+        } else {
+          // Place indicator to the right of the last card
+          const card = cards[cards.length - 1];
+          const rect = card.getBoundingClientRect();
+          left = rect.right + 2;
+          top = rect.top;
+          height = rect.height;
+        }
+
+        return (
+          <div
+            className="fixed z-50 pointer-events-none rounded-full bg-blue-400"
+            style={{ left, top, width: 3, height }}
+          />
         );
       })()}
 

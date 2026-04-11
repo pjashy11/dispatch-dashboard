@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { DispatchLoad } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { DispatchLoad, Scenario } from "@/lib/types";
 import SearchableSelect from "./SearchableSelect";
 
 interface DispatchLoadEditModalProps {
@@ -11,15 +11,18 @@ interface DispatchLoadEditModalProps {
     loadId: number,
     updates: { tankName?: string; dropoffName?: string; dropoffAccountName?: string }
   ) => Promise<void>;
+  scenarios?: Scenario[];
 }
 
 export default function DispatchLoadEditModal({
   load,
   onClose,
   onSave,
+  scenarios = [],
 }: DispatchLoadEditModalProps) {
   type SelectOption = { value: string; label: string };
-  type DropoffAccountOption = { value: string; label: string; dropoffs: SelectOption[] };
+  type DropoffOption = { value: string; label: string; miles: number | null };
+  type DropoffAccountOption = { value: string; label: string; dropoffs: DropoffOption[] };
 
   const [tank, setTank] = useState(load.tankName);
   const [dropoff, setDropoff] = useState(load.dropoffName);
@@ -28,7 +31,19 @@ export default function DispatchLoadEditModal({
   const [error, setError] = useState("");
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [tankOptions, setTankOptions] = useState<SelectOption[]>([]);
-  const [dropoffAccounts, setDropoffAccounts] = useState<DropoffAccountOption[]>([]);
+  const [rawDropoffAccounts, setRawDropoffAccounts] = useState<{ value: string; label: string; dropoffs: { value: string; label: string }[] }[]>([]);
+
+  // Build lookup: dropoffName → loadedMiles for scenarios matching this pickup
+  const pickupScenarios = useMemo(() => {
+    const map = new Map<string, number>();
+    const puName = load.pickupName.toUpperCase();
+    for (const s of scenarios) {
+      if (s.pickUpName.toUpperCase() === puName) {
+        map.set(s.dropOffName.toUpperCase(), s.loadedMiles);
+      }
+    }
+    return map;
+  }, [scenarios, load.pickupName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +82,7 @@ export default function DispatchLoadEditModal({
           label: item.tankNumber,
         }));
 
-        const accountMap = new Map<string, DropoffAccountOption>();
+        const accountMap = new Map<string, { value: string; label: string; dropoffs: { value: string; label: string }[] }>();
 
         for (const account of dropoffData.accounts || []) {
           accountMap.set(account.name, {
@@ -98,35 +113,18 @@ export default function DispatchLoadEditModal({
           });
         }
 
-        const nextDropoffAccounts: DropoffAccountOption[] = Array.from(accountMap.values()).sort((left, right) =>
+        const nextRawAccounts = Array.from(accountMap.values()).sort((left, right) =>
           left.label.localeCompare(right.label)
         );
 
         setTankOptions(nextTankOptions);
-        setDropoffAccounts(nextDropoffAccounts);
+        setRawDropoffAccounts(nextRawAccounts);
 
         if (
           nextTankOptions.length > 0 &&
           !nextTankOptions.some((option) => option.value === load.tankName)
         ) {
           setTank("");
-        }
-
-        const selectedAccount = nextDropoffAccounts.find((account) => account.value === load.dropoffAccountName);
-        if (selectedAccount) {
-          setDropoffAccount(selectedAccount.value);
-          if (!selectedAccount.dropoffs.some((option) => option.value === load.dropoffName)) {
-            setDropoff("");
-          }
-          return;
-        }
-
-        const inferredAccount = nextDropoffAccounts.find((account) =>
-          account.dropoffs.some((option) => option.value === load.dropoffName)
-        );
-        setDropoffAccount(inferredAccount?.value || "");
-        if (inferredAccount && !inferredAccount.dropoffs.some((option) => option.value === load.dropoffName)) {
-          setDropoff("");
         }
       } catch (caughtError: unknown) {
         if (!cancelled) {
@@ -143,9 +141,66 @@ export default function DispatchLoadEditModal({
     };
   }, [load]);
 
+  // Filter dropoff accounts to only include dropoffs that have a matching scenario for this pickup
+  const dropoffAccounts = useMemo<DropoffAccountOption[]>(() => {
+    if (pickupScenarios.size === 0) return [];
+    const filtered: DropoffAccountOption[] = [];
+    for (const acct of rawDropoffAccounts) {
+      const matchedDropoffs: DropoffOption[] = [];
+      for (const d of acct.dropoffs) {
+        const miles = pickupScenarios.get(d.value.toUpperCase());
+        if (miles !== undefined) {
+          matchedDropoffs.push({ value: d.value, label: d.value, miles });
+        }
+      }
+      if (matchedDropoffs.length > 0) {
+        matchedDropoffs.sort((a, b) => a.label.localeCompare(b.label));
+        filtered.push({ value: acct.value, label: acct.label, dropoffs: matchedDropoffs });
+      }
+    }
+    return filtered;
+  }, [rawDropoffAccounts, pickupScenarios]);
+
+  // Auto-select dropoff account once after data loads
+  const didAutoSelect = useRef(false);
+  useEffect(() => {
+    if (rawDropoffAccounts.length === 0 || didAutoSelect.current) return;
+    didAutoSelect.current = true;
+    const selectedAccount = dropoffAccounts.find((account) => account.value === load.dropoffAccountName);
+    if (selectedAccount) {
+      setDropoffAccount(selectedAccount.value);
+      if (!selectedAccount.dropoffs.some((option) => option.value === load.dropoffName)) {
+        setDropoff("");
+      }
+      return;
+    }
+    const inferredAccount = dropoffAccounts.find((account) =>
+      account.dropoffs.some((option) => option.value === load.dropoffName)
+    );
+    setDropoffAccount(inferredAccount?.value || "");
+    if (inferredAccount && !inferredAccount.dropoffs.some((option) => option.value === load.dropoffName)) {
+      setDropoff("");
+    }
+  }, [dropoffAccounts, rawDropoffAccounts.length, load.dropoffAccountName, load.dropoffName]);
+
   const availableDropoffs = useMemo(
     () => dropoffAccounts.find((account) => account.value === dropoffAccount)?.dropoffs || [],
     [dropoffAccount, dropoffAccounts]
+  );
+
+  // Build select options with miles in label
+  const dropoffSelectOptions = useMemo(
+    () => availableDropoffs.map((d) => ({
+      value: d.value,
+      label: d.miles != null ? `${d.value}  (${d.miles} mi)` : d.value,
+    })),
+    [availableDropoffs]
+  );
+
+  // Selected dropoff's loaded miles
+  const selectedMiles = useMemo(
+    () => availableDropoffs.find((d) => d.value === dropoff)?.miles ?? null,
+    [availableDropoffs, dropoff]
   );
 
   useEffect(() => {
@@ -234,16 +289,23 @@ export default function DispatchLoadEditModal({
         <SearchableSelect
           value={dropoff}
           onChange={setDropoff}
-          options={availableDropoffs}
+          options={dropoffSelectOptions}
           placeholder={loadingOptions ? "Loading dropoffs..." : dropoffAccount ? "Select drop off" : "Select account first"}
           disabled={loadingOptions || !dropoffAccount || availableDropoffs.length === 0}
-          className="mb-4 w-full rounded-lg px-2 py-1.5 text-sm"
+          className="mb-1 w-full rounded-lg px-2 py-1.5 text-sm"
           style={{
             background: "var(--color-input-bg)",
             border: "1px solid var(--color-input-border)",
             color: "var(--color-text-primary)",
           }}
         />
+        {selectedMiles != null ? (
+          <div className="mb-3 text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
+            Loaded Miles: <span style={{ color: "var(--color-accent)" }}>{selectedMiles}</span>
+          </div>
+        ) : (
+          <div className="mb-3" />
+        )}
 
         {error && <p className="mb-3 text-xs" style={{ color: "var(--color-danger)" }}>{error}</p>}
 

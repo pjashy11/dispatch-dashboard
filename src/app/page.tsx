@@ -233,6 +233,7 @@ export default function Home() {
           onSignOut={signOut}
           theme={theme}
           onThemeToggle={toggleTheme}
+          scenarios={scenarios}
         />
       </div>
     );

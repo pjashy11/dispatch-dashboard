@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchSetupInfo } from "@/lib/welltrax";
 
-const CRUDE_COMMODITY_ID = 1;
+
 
 interface CachedDropoff {
   id: number;
@@ -33,6 +33,8 @@ async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
       {
         target: "DROP_OFF",
         searchCriteria: {
+          isActive: "true",
+          commodityName: "CRUDE",
           offset: String(offset),
           limit: String(pageSize),
           sortBy: "name",
@@ -56,9 +58,6 @@ async function fetchAllDropoffAccounts(): Promise<CachedDropoffAccount[]> {
 
       const dropoffs: CachedDropoff[] = [];
       for (const d of account.dropOffList || []) {
-        // Use loose checks — API may return isActive/commodityId as different types
-        if (d.isActive === false || d.isActive === "false") continue;
-        if (Number(d.commodityId) !== CRUDE_COMMODITY_ID) continue;
 
         const terminals: string[] = (d.terminalList || [])
           .map((t: any) => t.contact?.fullName || t.name || "")
