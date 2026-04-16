@@ -396,6 +396,8 @@ export default function LoadForm({
   // Effective loaded miles: scenario value if exists, otherwise manual entry
   const effectiveLoadedMiles = scenarioLoadedMiles ?? (manualLoadedMiles ? Number(manualLoadedMiles) : null);
 
+  const [splitPickups, setSplitPickups] = useState<SplitPickup[]>([]);
+
   // Sync day toggle → date
   useEffect(() => {
     if (dayToggle === "today") {
@@ -482,9 +484,6 @@ export default function LoadForm({
       setDropoffName("");
     }
   };
-
-  // Split pickups (indices 2-6, same account as primary)
-  const [splitPickups, setSplitPickups] = useState<SplitPickup[]>([]);
 
   const addSplitPickup = () => {
     if (splitPickups.length >= 5) return;
@@ -1013,37 +1012,41 @@ export default function LoadForm({
                   Pickup
                 </h3>
 
+                {/* Pickup Name 1 */}
                 <div>
-                  <label className={labelClass} style={labelStyle}>
-                    Pickup Name *
-                  </label>
-                  {loadingPickups ? (
-                    <div className="flex items-center gap-2 text-base py-1.5" style={{ color: "var(--color-text-muted)" }}>
-                      <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                      Loading...
-                    </div>
-                  ) : (
-                    <SearchableSelect
-                      value={selectedPickupName}
-                      onChange={handlePickupChange}
-                      disabled={!pickupAccountName || pickupOptions.length === 0}
-                      options={pickupOptions.map((p) => ({ value: p.name, label: p.name }))}
-                      placeholder={
-                        !pickupAccountName
-                          ? "Select account first"
-                          : pickupOptions.length === 0
-                          ? "No pickups found"
-                          : "Select Pickup"
-                      }
-                      className={`${inputClass} disabled:opacity-50`}
-                      style={inputStyle}
-                    />
-                  )}
+                  <div>
+                    <label className={labelClass} style={labelStyle}>
+                      {splitPickups.length > 0 ? "Pickup Name 1 *" : "Pickup Name *"}
+                    </label>
+                    {loadingPickups ? (
+                      <div className="flex items-center gap-2 text-base py-1.5" style={{ color: "var(--color-text-muted)" }}>
+                        <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                        Loading...
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        value={selectedPickupName}
+                        onChange={handlePickupChange}
+                        disabled={!pickupAccountName || pickupOptions.length === 0}
+                        options={pickupOptions.map((p) => ({ value: p.name, label: p.name }))}
+                        placeholder={
+                          !pickupAccountName
+                            ? "Select account first"
+                            : pickupOptions.length === 0
+                            ? "No pickups found"
+                            : "Select Pickup"
+                        }
+                        className={`${inputClass} disabled:opacity-50`}
+                        style={inputStyle}
+                      />
+                    )}
+                  </div>
+
                 </div>
 
                 <div style={{ maxWidth: "160px" }}>
                   <label className={labelClass} style={labelStyle}>
-                    Tank
+                    {splitPickups.length > 0 ? "Tank 1" : "Tank"}
                   </label>
                   <SearchableSelect
                     value={selectedTankNumber}
@@ -1056,79 +1059,51 @@ export default function LoadForm({
                   />
                 </div>
 
-                {/* Split Pickups */}
-                {selectedPickupName && (
-                  <div
-                    className="space-y-2 rounded-lg p-3"
-                    style={{
-                      background: "var(--color-bg-tertiary)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>
-                        Split Pickups {splitPickups.length > 0 ? `(${splitPickups.length})` : ""}
-                      </span>
-                      {splitPickups.length < 5 && (
-                        <button
-                          onClick={addSplitPickup}
-                          className="text-xs px-2 py-0.5 rounded transition-colors"
-                          style={{
-                            background: "var(--color-input-bg)",
-                            border: "1px solid var(--color-input-border)",
-                            color: "var(--color-text-primary)",
-                          }}
-                        >
-                          + Add Split
-                        </button>
-                      )}
-                    </div>
-
-                    {splitPickups.length === 0 && (
-                      <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                        Add up to 5 additional pickup locations on the same load.
-                      </p>
-                    )}
-
-                    {splitPickups.map((sp, i) => {
-                      const splitPickupData = pickupOptions.find((p) => p.name === sp.pickupName);
-                      const splitTankOptions = splitPickupData?.tanks || [];
-                      return (
-                        <div key={i} className="space-y-1.5 pt-2" style={{ borderTop: "1px solid var(--color-border)" }}>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium" style={{ color: "var(--color-accent)" }}>
-                              Split #{i + 2}
-                            </span>
-                            <button
-                              onClick={() => removeSplitPickup(i)}
-                              className="text-xs hover:opacity-80"
-                              style={{ color: "var(--color-text-muted)" }}
-                            >
-                              &times; Remove
-                            </button>
-                          </div>
-                          <SearchableSelect
-                            value={sp.pickupName}
-                            onChange={(v) => updateSplitPickup(i, "pickupName", v)}
-                            options={pickupOptions.map((p) => ({ value: p.name, label: p.name }))}
-                            placeholder="Select Pickup"
-                            className={inputClass}
-                            style={inputStyle}
-                          />
-                          <SearchableSelect
-                            value={sp.tankNumber}
-                            onChange={(v) => updateSplitPickup(i, "tankNumber", v)}
-                            disabled={!sp.pickupName || splitTankOptions.length === 0}
-                            options={splitTankOptions.map((t) => ({ value: t.tankNumber, label: t.tankNumber }))}
-                            placeholder={splitTankOptions.length === 0 ? "No tanks" : "Select Tank"}
-                            className={`${inputClass} disabled:opacity-50`}
-                            style={inputStyle}
-                          />
+                {/* Additional split pickups (Pickup Name 2, 3, ...) */}
+                {splitPickups.map((sp, i) => {
+                  const splitPickupData = pickupOptions.find((p) => p.name === sp.pickupName);
+                  const splitTankOptions = splitPickupData?.tanks || [];
+                  return (
+                    <div key={i} className="space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className={labelClass} style={{ ...labelStyle, marginBottom: 0 }}>
+                            Pickup Name {i + 2}
+                          </label>
+                          <button
+                            onClick={() => removeSplitPickup(i)}
+                            className="text-xs hover:opacity-80"
+                            style={{ color: "var(--color-text-muted)" }}
+                          >
+                            &times; Remove
+                          </button>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <SearchableSelect
+                          value={sp.pickupName}
+                          onChange={(v) => updateSplitPickup(i, "pickupName", v)}
+                          options={pickupOptions.map((p) => ({ value: p.name, label: p.name }))}
+                          placeholder="Select Pickup"
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div style={{ maxWidth: "160px" }}>
+                        <label className={labelClass} style={labelStyle}>
+                          Tank {i + 2}
+                        </label>
+                        <SearchableSelect
+                          value={sp.tankNumber}
+                          onChange={(v) => updateSplitPickup(i, "tankNumber", v)}
+                          disabled={!sp.pickupName || splitTankOptions.length === 0}
+                          options={splitTankOptions.map((t) => ({ value: t.tankNumber, label: t.tankNumber }))}
+                          placeholder={splitTankOptions.length === 0 ? "No tanks" : "Select Tank"}
+                          className={`${inputClass} disabled:opacity-50`}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
 
                 {/* Urgent under pickup */}
                 <div>
@@ -1156,6 +1131,23 @@ export default function LoadForm({
                     </label>
                   </div>
                 </div>
+
+                {/* Split button under Urgent */}
+                {selectedPickupName && splitPickups.length < 5 && (
+                  <div>
+                    <button
+                      onClick={addSplitPickup}
+                      className="text-sm px-3 py-1.5 rounded transition-colors"
+                      style={{
+                        background: "var(--color-input-bg)",
+                        border: "1px solid var(--color-input-border)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    >
+                      + Split
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Vertical divider */}
@@ -1246,24 +1238,9 @@ export default function LoadForm({
 
             <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "12px" }} />
 
-            {/* Load Instructions + Loads to Create side by side */}
+            {/* Multi-load entries (left) + Load Instructions (right) */}
             <div className="grid gap-4 xl:grid-cols-2">
-              {/* LEFT: Load Instructions */}
-              <div>
-                <label className={labelClass} style={labelStyle}>
-                  Load Instructions
-                </label>
-                <textarea
-                  value={loadInstructions}
-                  onChange={(e) => setLoadInstructions(e.target.value)}
-                  rows={4}
-                  className={`${inputClass} resize-y`}
-                  style={inputStyle}
-                  placeholder="Optional instructions..."
-                />
-              </div>
-
-              {/* RIGHT: Multi-load entries — highlighted */}
+              {/* LEFT: Multi-load entries — highlighted */}
               <div
                 className="space-y-2 rounded-lg p-3"
                 style={{
@@ -1271,10 +1248,7 @@ export default function LoadForm({
                   border: "1px solid var(--color-accent, #3b82f6)",
                 }}
               >
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-semibold" style={{ color: "var(--color-text-primary)" }}>
-                    Loads to Create ({entries.length})
-                  </label>
+                <div className="flex items-center justify-end">
                   <button
                     onClick={addEntry}
                     className="text-sm px-2 py-0.5 rounded transition-colors"
@@ -1315,6 +1289,21 @@ export default function LoadForm({
                     )}
                   </div>
                 ))}
+              </div>
+
+              {/* RIGHT: Load Instructions */}
+              <div>
+                <label className={labelClass} style={labelStyle}>
+                  Load Instructions
+                </label>
+                <textarea
+                  value={loadInstructions}
+                  onChange={(e) => setLoadInstructions(e.target.value)}
+                  rows={4}
+                  className={`${inputClass} resize-y`}
+                  style={inputStyle}
+                  placeholder="Optional instructions..."
+                />
               </div>
             </div>
           </>

@@ -15,6 +15,7 @@ export default function Home() {
 
   const [allLoads, setAllLoads] = useState<Load[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [accountsByTerminal, setAccountsByTerminal] = useState<Record<string, string[]>>({});
   const [selectedTerminals, setSelectedTerminals] = useState<string[]>([]);
   const [showToday, setShowToday] = useState(true);
   const [showTomorrow, setShowTomorrow] = useState(false);
@@ -92,6 +93,39 @@ export default function Home() {
       .catch(console.error);
   }, []);
 
+  // Fetch all active pickup accounts (grouped by terminal) on mount.
+  // Used by LoadForm's Pickup Account dropdown — must show ALL active
+  // accounts for the terminal, not just those with existing loads.
+  const fetchPickupAccounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/pickup-accounts");
+      const data = await res.json();
+      const accounts: { name: string; terminals: string[] }[] = data.accounts || [];
+      const fallbackTerminals = ["MIDLAND", "CARLSBAD/ORLA", "PECOS/FT STOCKTON", "SOUTH TEXAS"];
+      const map: Record<string, Set<string>> = {};
+      for (const acct of accounts) {
+        // Accounts with no terminalList on their pickups → show in every terminal
+        // rather than hiding them (the previous bug was accounts disappearing).
+        const terminalsForAccount = acct.terminals.length > 0 ? acct.terminals : fallbackTerminals;
+        for (const terminal of terminalsForAccount) {
+          if (!map[terminal]) map[terminal] = new Set<string>();
+          map[terminal].add(acct.name);
+        }
+      }
+      const result: Record<string, string[]> = {};
+      for (const [terminal, names] of Object.entries(map)) {
+        result[terminal] = Array.from(names).sort((a, b) => a.localeCompare(b));
+      }
+      setAccountsByTerminal(result);
+    } catch (err) {
+      console.error("Failed to fetch pickup accounts:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPickupAccounts();
+  }, [fetchPickupAccounts]);
+
   const fetchLoads = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
@@ -124,7 +158,6 @@ export default function Home() {
     availablePickups,
     availableOperators,
     availableDropoffs,
-    accountsByTerminal,
   } = useLoadSelectors({
     allLoads,
     showToday,
@@ -150,15 +183,19 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "clear" }),
         }),
+        fetch("/api/pickup-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "clear" }),
+        }),
       ]);
-      // Also re-fetch loads to get fresh data
-      await fetchLoads(true);
+      await Promise.all([fetchLoads(true), fetchPickupAccounts()]);
     } catch (err) {
       console.error("Cache refresh failed:", err);
     } finally {
       setCacheRefreshing(false);
     }
-  }, [fetchLoads]);
+  }, [fetchLoads, fetchPickupAccounts]);
 
   const handleSelectLoad = (load: Load) => {
     setSelectedLoad(load);

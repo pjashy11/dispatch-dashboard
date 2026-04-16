@@ -18,7 +18,6 @@ interface LoadSelectorsResult {
   availablePickups: string[];
   availableOperators: string[];
   availableDropoffs: string[];
-  accountsByTerminal: Record<string, string[]>;
   summary: {
     visible: number;
     urgent: number;
@@ -54,7 +53,6 @@ export function useLoadSelectors({
     const availablePickups = new Set<string>();
     const availableOperators = new Set<string>();
     const availableDropoffs = new Set<string>();
-    const accountsByTerminalMap = new Map<string, Set<string>>();
     const filteredLoads: Load[] = [];
     const summary = {
       visible: 0,
@@ -63,15 +61,6 @@ export function useLoadSelectors({
       today: 0,
       tomorrow: 0,
     };
-
-    for (const load of allLoads) {
-      if (load.terminal && load.pickupAccountName) {
-        if (!accountsByTerminalMap.has(load.terminal)) {
-          accountsByTerminalMap.set(load.terminal, new Set<string>());
-        }
-        accountsByTerminalMap.get(load.terminal)?.add(load.pickupAccountName);
-      }
-    }
 
     for (const load of dayFilteredLoads) {
       const matchesAccount = selectedAccounts.length === 0 || selectedAccounts.includes(load.pickupAccountName);
@@ -105,18 +94,12 @@ export function useLoadSelectors({
       if (load.aging === -1) summary.tomorrow += 1;
     }
 
-    const accountsByTerminal: Record<string, string[]> = {};
-    for (const [terminal, accounts] of accountsByTerminalMap) {
-      accountsByTerminal[terminal] = sortValues(accounts);
-    }
-
     return {
       filteredLoads,
       availableAccounts: sortValues(availableAccounts),
       availablePickups: sortValues(availablePickups),
       availableOperators: sortValues(availableOperators),
       availableDropoffs: sortValues(availableDropoffs),
-      accountsByTerminal,
       summary,
     };
   }, [
